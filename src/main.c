@@ -84,7 +84,7 @@ static const struct hid_ops ops = {
 /* Function to send mouse movement report */
 static void send_mouse_report(int8_t x, int8_t y, uint8_t buttons)
 {
-	uint8_t report[MOUSE_REPORT_COUNT] = {buttons, x, y, 0};  /* 4th byte is wheel (0 = no scroll) */
+	uint8_t report[MOUSE_REPORT_COUNT] = {buttons, x, y, 0};
 
 	if (k_msgq_put(&mouse_msgq, report, K_NO_WAIT) != 0) {
 		LOG_WRN("Failed to queue mouse report");
@@ -255,7 +255,7 @@ int main(void)
 {
 	int err;
 
-	LOG_INF("Enhanced ShockBurst prx sample");
+	LOG_INF("Nordic AirPad Sample");
 
 	err = clocks_start();
 	if (err) {
@@ -318,7 +318,7 @@ int main(void)
 		return 0;
 	}
 
-	LOG_INF("USB HID Mouse initialized - ESB packets will move cursor");
+	LOG_INF("USB HID Mouse initialized - ESB packets will left click mouse");
 
 	/* Main loop: process USB HID mouse reports */
 	while (true) {
