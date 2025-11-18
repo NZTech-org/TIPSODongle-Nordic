@@ -33,6 +33,18 @@
 
 LOG_MODULE_REGISTER(esb_prx, CONFIG_ESB_PRX_APP_LOG_LEVEL);
 
+/* Sensor data packet structure */
+typedef struct {
+	uint32_t sequence_num;
+	uint8_t btn_state;      /* 3 bits: btn1, btn2, btn3 (1=pressed, 0=released) */
+	uint32_t timestamp_ms;
+	/* Future expansion:
+	 * uint8_t cap_state;
+	 * int16_t imu_accel_x, y, z;
+	 * int16_t imu_gyro_x, y, z;
+	 */
+} __attribute__((packed)) sensor_data_t;
+
 static struct esb_payload rx_payload;
 static struct esb_payload tx_payload = ESB_CREATE_PAYLOAD(0,
 	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17);
@@ -102,21 +114,51 @@ void event_handler(struct esb_evt const *event)
 		break;
 	case ESB_EVENT_RX_RECEIVED:
 		if (esb_read_rx_payload(&rx_payload) == 0) {
-			LOG_INF("Packet received, len %d : '%c' (0x%02x)",
-				rx_payload.length,
-				rx_payload.data[0],
-				rx_payload.data[0]);
-
-			leds_update(rx_payload.data[0]);
-
-			/* If received byte is 'A', perform a left mouse click */
-			if (rx_payload.data[0] == 'A') {
-				LOG_INF("Performing left click");
-				/* Press left button */
-				send_mouse_report(0, 0, 0x01);
-				/* Release left button */
-				send_mouse_report(0, 0, 0x00);
+			/* Check if payload size matches sensor_data_t */
+			if (rx_payload.length != sizeof(sensor_data_t)) {
+				LOG_WRN("Unexpected payload length: %d (expected %d)",
+					rx_payload.length, sizeof(sensor_data_t));
+				return;
 			}
+
+			/* Parse packet as sensor_data_t */
+			sensor_data_t *sensor_data = (sensor_data_t *)rx_payload.data;
+
+			/* Extract button states from btn_state */
+			uint8_t btn1 = sensor_data->btn_state & 0x01;  /* bit 0 */
+			uint8_t btn2 = (sensor_data->btn_state >> 1) & 0x01;  /* bit 1 */
+			uint8_t btn3 = (sensor_data->btn_state >> 2) & 0x01;  /* bit 2 */
+
+			/* Log received packet data */
+			LOG_INF("Packet received - seq: %u, btn_state: 0x%02x (btn1=%d, btn2=%d, btn3=%d), timestamp: %u ms",
+				sensor_data->sequence_num,
+				sensor_data->btn_state,
+				btn1, btn2, btn3,
+				sensor_data->timestamp_ms);
+
+			leds_update(sensor_data->btn_state);
+
+			/* Build HID mouse button byte:
+			 * bit 0 = left button (btn1)
+			 * bit 1 = right button (btn2)
+			 */
+			uint8_t mouse_buttons = 0;
+			if (btn1) {
+				mouse_buttons |= 0x01;  /* Left button pressed */
+				LOG_INF("Left mouse button: PRESSED");
+			} else {
+				LOG_INF("Left mouse button: RELEASED");
+			}
+
+			if (btn2) {
+				mouse_buttons |= 0x02;  /* Right button pressed */
+				LOG_INF("Right mouse button: PRESSED");
+			} else {
+				LOG_INF("Right mouse button: RELEASED");
+			}
+
+			/* Send mouse report with current button state */
+			send_mouse_report(0, 0, mouse_buttons);
 		} else {
 			LOG_ERR("Error while reading rx packet");
 		}
