@@ -125,101 +125,46 @@ static kbd_state_t kbd_state = {0};
 /* HID Report Descriptor for Mouse + Keyboard composite device */
 static const uint8_t hid_report_desc[] = {
 	/* ============ MOUSE COLLECTION (Report ID 1) ============ */
-	0x05, 0x01,        // Usage Page (Generic Desktop)
-	0x09, 0x02,        // Usage (Mouse)
-	0xA1, 0x01,        // Collection (Application)
-	0x85, 0x01,        //   Report ID (1) - MOUSE
-	0x09, 0x01,        //   Usage (Pointer)
-	0xA1, 0x00,        //   Collection (Physical)
+	0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xA1, 0x00,
 
-	// Button bits (3 buttons)
-	0x05, 0x09,        //     Usage Page (Buttons)
-	0x19, 0x01,        //     Usage Minimum (Button 1)
-	0x29, 0x03,        //     Usage Maximum (Button 3)
-	0x15, 0x00,        //     Logical Minimum (0)
-	0x25, 0x01,        //     Logical Maximum (1)
-	0x95, 0x03,        //     Report Count (3)
-	0x75, 0x01,        //     Report Size (1 bit)
-	0x81, 0x02,        //     Input (Data, Variable, Absolute)
+	/* Buttons (3 buttons, 3 bits + 5-bit padding) */
+	0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01,
+	0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
+	0x95, 0x01, 0x75, 0x05, 0x81, 0x01,
 
-	// Padding to byte boundary
-	0x95, 0x01,        //     Report Count (1)
-	0x75, 0x05,        //     Report Size (5 bits)
-	0x81, 0x01,        //     Input (Constant) - padding
+	/* X Position (16-bit absolute, 0-32767) */
+	0x05, 0x01, 0x09, 0x30, 0x15, 0x00, 0x26, 0xFF, 0x7F,
+	0x75, 0x10, 0x95, 0x01, 0x81, 0x02,
 
-	// X Position (Absolute, 16-bit, 0-32767)
-	0x05, 0x01,        //     Usage Page (Generic Desktop)
-	0x09, 0x30,        //     Usage (X)
-	0x15, 0x00,        //     Logical Minimum (0)
-	0x26, 0xFF, 0x7F,  //     Logical Maximum (32767)
-	0x75, 0x10,        //     Report Size (16 bits)
-	0x95, 0x01,        //     Report Count (1)
-	0x81, 0x02,        //     Input (Data, Variable, Absolute)
+	/* Y Position (16-bit absolute, 0-32767) */
+	0x09, 0x31, 0x15, 0x00, 0x26, 0xFF, 0x7F,
+	0x75, 0x10, 0x95, 0x01, 0x81, 0x02,
 
-	// Y Position (Absolute, 16-bit, 0-32767)
-	0x09, 0x31,        //     Usage (Y)
-	0x15, 0x00,        //     Logical Minimum (0)
-	0x26, 0xFF, 0x7F,  //     Logical Maximum (32767)
-	0x75, 0x10,        //     Report Size (16 bits)
-	0x95, 0x01,        //     Report Count (1)
-	0x81, 0x02,        //     Input (Data, Variable, Absolute)
+	/* Scroll Wheel (8-bit relative, -127 to +127) */
+	0x09, 0x38, 0x15, 0x81, 0x25, 0x7F,
+	0x75, 0x08, 0x95, 0x01, 0x81, 0x06,
 
-	// Scroll Wheel (Relative, 8-bit, -127 to +127)
-	0x09, 0x38,        //     Usage (Wheel)
-	0x15, 0x81,        //     Logical Minimum (-127)
-	0x25, 0x7F,        //     Logical Maximum (127)
-	0x75, 0x08,        //     Report Size (8 bits)
-	0x95, 0x01,        //     Report Count (1)
-	0x81, 0x06,        //     Input (Data, Variable, Relative)
-
-	0xC0,              //   End Collection (Physical)
-	0xC0,              // End Collection (Application)
+	0xC0, 0xC0,
 
 	/* ============ KEYBOARD COLLECTION (Report ID 2) ============ */
-	0x05, 0x01,        // Usage Page (Generic Desktop)
-	0x09, 0x06,        // Usage (Keyboard)
-	0xA1, 0x01,        // Collection (Application)
-	0x85, 0x02,        //   Report ID (2) - KEYBOARD
+	0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x02,
 
-	// Modifier byte (Ctrl, Shift, Alt, GUI)
-	0x05, 0x07,        //   Usage Page (Key Codes)
-	0x19, 0xE0,        //   Usage Minimum (Left Ctrl)
-	0x29, 0xE7,        //   Usage Maximum (Right GUI)
-	0x15, 0x00,        //   Logical Minimum (0)
-	0x25, 0x01,        //   Logical Maximum (1)
-	0x75, 0x01,        //   Report Size (1 bit)
-	0x95, 0x08,        //   Report Count (8)
-	0x81, 0x02,        //   Input (Data, Variable, Absolute)
+	/* Modifiers (8 bits: Ctrl, Shift, Alt, GUI) */
+	0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25, 0x01,
+	0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
 
-	// Reserved byte
-	0x95, 0x01,        //   Report Count (1)
-	0x75, 0x08,        //   Report Size (8 bits)
-	0x81, 0x01,        //   Input (Constant)
+	/* Reserved byte */
+	0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
 
-	// LED Output (Num Lock, Caps Lock, etc.)
-	0x95, 0x05,        //   Report Count (5)
-	0x75, 0x01,        //   Report Size (1 bit)
-	0x05, 0x08,        //   Usage Page (LEDs)
-	0x19, 0x01,        //   Usage Minimum (Num Lock)
-	0x29, 0x05,        //   Usage Maximum (Kana)
-	0x91, 0x02,        //   Output (Data, Variable, Absolute)
+	/* LED Output (5 bits: Num/Caps/Scroll Lock, etc. + 3-bit padding) */
+	0x95, 0x05, 0x75, 0x01, 0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02,
+	0x95, 0x01, 0x75, 0x03, 0x91, 0x01,
 
-	// LED padding
-	0x95, 0x01,        //   Report Count (1)
-	0x75, 0x03,        //   Report Size (3 bits)
-	0x91, 0x01,        //   Output (Constant)
+	/* Key array (6 simultaneous keys, 0-101) */
+	0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65,
+	0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00,
 
-	// Key array (6 simultaneous keys)
-	0x95, 0x06,        //   Report Count (6)
-	0x75, 0x08,        //   Report Size (8 bits)
-	0x15, 0x00,        //   Logical Minimum (0)
-	0x25, 0x65,        //   Logical Maximum (101)
-	0x05, 0x07,        //   Usage Page (Key Codes)
-	0x19, 0x00,        //   Usage Minimum (0)
-	0x29, 0x65,        //   Usage Maximum (101)
-	0x81, 0x00,        //   Input (Data, Array)
-
-	0xC0               // End Collection (Application)
+	0xC0
 };
 
 static enum usb_dc_status_code usb_status;
@@ -599,7 +544,7 @@ int clocks_start(void)
 #endif /* NRF54L_ERRATA_20_PRESENT */
 
 #if defined(NRF54LM20A_ENGA_XXAA)
-	/* MLTPAN-39 */
+	/* Start PLL for nRF54LM20A compatibility */
 	nrf_clock_task_trigger(NRF_CLOCK, NRF_CLOCK_TASK_PLLSTART);
 #endif
 
@@ -617,7 +562,7 @@ int clocks_start(void)
 		DEVICE_DT_GET_OR_NULL(DT_CLOCKS_CTLR(DT_NODELABEL(radio)));
 	struct onoff_client radio_cli;
 
-	/** Keep radio domain powered all the time to reduce latency. */
+	/* Keep radio domain powered all the time to reduce latency */
 	nrf_lrcconf_poweron_force_set(NRF_LRCCONF010, NRF_LRCCONF_POWER_DOMAIN_1, true);
 
 	sys_notify_init_spinwait(&radio_cli.notify);
@@ -647,9 +592,7 @@ BUILD_ASSERT(false, "No Clock Control driver");
 int esb_initialize(void)
 {
 	int err;
-	/* These are arbitrary default addresses. In end user products
-	 * different addresses should be used for each set of devices.
-	 */
+	/* Demo default addresses - use unique values per device in production */
 	uint8_t base_addr_0[4] = {0xE7, 0xE7, 0xE7, 0xE7};
 	uint8_t base_addr_1[4] = {0xC2, 0xC2, 0xC2, 0xC2};
 	uint8_t addr_prefix[8] = {0xE7, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8};
