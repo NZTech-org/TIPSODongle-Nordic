@@ -61,11 +61,54 @@ static bool led_on = false;
 #define MOUSE_WHEEL_IDX		5	/* Scroll wheel */
 #define MOUSE_REPORT_COUNT	6
 
-/* HID Report Descriptor for absolute positioning digitizer */
+/* USB HID Keyboard definitions */
+#define KBD_MODIFIER_IDX	0	/* Modifier keys byte */
+#define KBD_RESERVED_IDX	1	/* Reserved byte (always 0x00) */
+#define KBD_KEY1_IDX		2	/* First keycode */
+#define KBD_KEY2_IDX		3
+#define KBD_KEY3_IDX		4
+#define KBD_KEY4_IDX		5
+#define KBD_KEY5_IDX		6
+#define KBD_KEY6_IDX		7	/* Sixth keycode */
+#define KBD_REPORT_COUNT	8	/* Data bytes only, no Report ID */
+
+/* HID Report IDs */
+#define REPORT_ID_MOUSE		0x01
+#define REPORT_ID_KEYBOARD	0x02
+
+/* HID Keyboard Keycodes */
+#define HID_KEY_A		0x04
+#define HID_KEY_B		0x05
+#define HID_KEY_C		0x06
+#define HID_KEY_D		0x07
+
+/* Keyboard state tracking */
+typedef struct {
+	uint8_t touch_n_pressed;
+	uint8_t touch_s_pressed;
+	uint8_t touch_e_pressed;
+	uint8_t touch_w_pressed;
+} kbd_state_t;
+
+static kbd_state_t kbd_state = {0};
+
+/* MGC state bit field definitions */
+#define MGC_TOUCH_N         (1 << 0)  /* North electrode */
+#define MGC_TOUCH_S         (1 << 1)  /* South electrode */
+#define MGC_TOUCH_E         (1 << 2)  /* East electrode */
+#define MGC_TOUCH_W         (1 << 3)  /* West electrode */
+#define MGC_AIRWHEEL_ACTIVE (1 << 4)  /* Airwheel gesture active */
+#define MGC_AIRWHEEL_DIR    (1 << 5)  /* Direction: 1=CW, 0=CCW */
+#define MGC_AIRWHEEL_VEL_MASK 0xC0    /* Bits 6-7: velocity level */
+#define MGC_AIRWHEEL_VEL_SHIFT 6
+
+/* HID Report Descriptor for Mouse + Keyboard composite device */
 static const uint8_t hid_report_desc[] = {
+	/* ============ MOUSE COLLECTION (Report ID 1) ============ */
 	0x05, 0x01,        // Usage Page (Generic Desktop)
 	0x09, 0x02,        // Usage (Mouse)
 	0xA1, 0x01,        // Collection (Application)
+	0x85, 0x01,        //   Report ID (1) - MOUSE
 	0x09, 0x01,        //   Usage (Pointer)
 	0xA1, 0x00,        //   Collection (Physical)
 
@@ -110,14 +153,61 @@ static const uint8_t hid_report_desc[] = {
 	0x81, 0x06,        //     Input (Data, Variable, Relative)
 
 	0xC0,              //   End Collection (Physical)
+	0xC0,              // End Collection (Application)
+
+	/* ============ KEYBOARD COLLECTION (Report ID 2) ============ */
+	0x05, 0x01,        // Usage Page (Generic Desktop)
+	0x09, 0x06,        // Usage (Keyboard)
+	0xA1, 0x01,        // Collection (Application)
+	0x85, 0x02,        //   Report ID (2) - KEYBOARD
+
+	// Modifier byte (Ctrl, Shift, Alt, GUI)
+	0x05, 0x07,        //   Usage Page (Key Codes)
+	0x19, 0xE0,        //   Usage Minimum (Left Ctrl)
+	0x29, 0xE7,        //   Usage Maximum (Right GUI)
+	0x15, 0x00,        //   Logical Minimum (0)
+	0x25, 0x01,        //   Logical Maximum (1)
+	0x75, 0x01,        //   Report Size (1 bit)
+	0x95, 0x08,        //   Report Count (8)
+	0x81, 0x02,        //   Input (Data, Variable, Absolute)
+
+	// Reserved byte
+	0x95, 0x01,        //   Report Count (1)
+	0x75, 0x08,        //   Report Size (8 bits)
+	0x81, 0x01,        //   Input (Constant)
+
+	// LED Output (Num Lock, Caps Lock, etc.)
+	0x95, 0x05,        //   Report Count (5)
+	0x75, 0x01,        //   Report Size (1 bit)
+	0x05, 0x08,        //   Usage Page (LEDs)
+	0x19, 0x01,        //   Usage Minimum (Num Lock)
+	0x29, 0x05,        //   Usage Maximum (Kana)
+	0x91, 0x02,        //   Output (Data, Variable, Absolute)
+
+	// LED padding
+	0x95, 0x01,        //   Report Count (1)
+	0x75, 0x03,        //   Report Size (3 bits)
+	0x91, 0x01,        //   Output (Constant)
+
+	// Key array (6 simultaneous keys)
+	0x95, 0x06,        //   Report Count (6)
+	0x75, 0x08,        //   Report Size (8 bits)
+	0x15, 0x00,        //   Logical Minimum (0)
+	0x25, 0x65,        //   Logical Maximum (101)
+	0x05, 0x07,        //   Usage Page (Key Codes)
+	0x19, 0x00,        //   Usage Minimum (0)
+	0x29, 0x65,        //   Usage Maximum (101)
+	0x81, 0x00,        //   Input (Data, Array)
+
 	0xC0               // End Collection (Application)
 };
 
 static enum usb_dc_status_code usb_status;
 static const struct device *hid_dev;
 
-/* Message queue for mouse reports */
+/* Message queues for HID reports */
 K_MSGQ_DEFINE(mouse_msgq, MOUSE_REPORT_COUNT, 8, 4);
+K_MSGQ_DEFINE(kbd_msgq, KBD_REPORT_COUNT, 8, 4);
 static K_SEM_DEFINE(ep_write_sem, 0, 1);
 
 static void leds_update(uint8_t value)
@@ -256,15 +346,69 @@ static void send_mouse_report(uint16_t abs_x, uint16_t abs_y, uint8_t buttons, i
 	}
 }
 
-/* MGC state bit field definitions */
-#define MGC_TOUCH_N         (1 << 0)  /* North electrode */
-#define MGC_TOUCH_S         (1 << 1)  /* South electrode */
-#define MGC_TOUCH_E         (1 << 2)  /* East electrode */
-#define MGC_TOUCH_W         (1 << 3)  /* West electrode */
-#define MGC_AIRWHEEL_ACTIVE (1 << 4)  /* Airwheel gesture active */
-#define MGC_AIRWHEEL_DIR    (1 << 5)  /* Direction: 1=CW, 0=CCW */
-#define MGC_AIRWHEEL_VEL_MASK 0xC0    /* Bits 6-7: velocity level */
-#define MGC_AIRWHEEL_VEL_SHIFT 6
+/* Function to send keyboard report */
+static void send_keyboard_report(uint8_t keycode)
+{
+	uint8_t report[KBD_REPORT_COUNT];
+
+	memset(report, 0, KBD_REPORT_COUNT);
+	if (keycode != 0x00) {
+		report[KBD_KEY1_IDX] = keycode;
+	}
+
+	if (k_msgq_put(&kbd_msgq, report, K_NO_WAIT) != 0) {
+		LOG_WRN("Failed to queue keyboard report");
+	}
+}
+
+/* Process keyboard touches with edge-triggered detection */
+static void process_keyboard_touches(uint8_t mgc_state)
+{
+	uint8_t touch_n_active = (mgc_state & MGC_TOUCH_N) ? 1 : 0;
+	uint8_t touch_s_active = (mgc_state & MGC_TOUCH_S) ? 1 : 0;
+	uint8_t touch_e_active = (mgc_state & MGC_TOUCH_E) ? 1 : 0;
+	uint8_t touch_w_active = (mgc_state & MGC_TOUCH_W) ? 1 : 0;
+
+	/* Touch N: 'a' key */
+	if (touch_n_active && !kbd_state.touch_n_pressed) {
+		send_keyboard_report(HID_KEY_A);
+		LOG_INF("Touch N pressed → Keyboard 'a'");
+	} else if (!touch_n_active && kbd_state.touch_n_pressed) {
+		send_keyboard_report(0x00);
+		LOG_INF("Touch N released → Keyboard release");
+	}
+	kbd_state.touch_n_pressed = touch_n_active;
+
+	/* Touch S: 'b' key */
+	if (touch_s_active && !kbd_state.touch_s_pressed) {
+		send_keyboard_report(HID_KEY_B);
+		LOG_INF("Touch S pressed → Keyboard 'b'");
+	} else if (!touch_s_active && kbd_state.touch_s_pressed) {
+		send_keyboard_report(0x00);
+		LOG_INF("Touch S released → Keyboard release");
+	}
+	kbd_state.touch_s_pressed = touch_s_active;
+
+	/* Touch E: 'c' key */
+	if (touch_e_active && !kbd_state.touch_e_pressed) {
+		send_keyboard_report(HID_KEY_C);
+		LOG_INF("Touch E pressed → Keyboard 'c'");
+	} else if (!touch_e_active && kbd_state.touch_e_pressed) {
+		send_keyboard_report(0x00);
+		LOG_INF("Touch E released → Keyboard release");
+	}
+	kbd_state.touch_e_pressed = touch_e_active;
+
+	/* Touch W: 'd' key */
+	if (touch_w_active && !kbd_state.touch_w_pressed) {
+		send_keyboard_report(HID_KEY_D);
+		LOG_INF("Touch W pressed → Keyboard 'd'");
+	} else if (!touch_w_active && kbd_state.touch_w_pressed) {
+		send_keyboard_report(0x00);
+		LOG_INF("Touch W released → Keyboard release");
+	}
+	kbd_state.touch_w_pressed = touch_w_active;
+}
 
 void event_handler(struct esb_evt const *event)
 {
@@ -335,24 +479,6 @@ void event_handler(struct esb_evt const *event)
 			/* Calculate scroll wheel value */
 			int8_t wheel = 0;
 
-			/* Touch gesture scrolling - edge-triggered */
-			static uint8_t prev_touch_state = 0;
-			uint8_t touch_state = mgc & 0x0F;  /* Lower 4 bits = touch electrodes */
-			uint8_t touch_edge = touch_state & ~prev_touch_state;  /* Rising edge */
-			uint8_t touch_n_edge = touch_edge & MGC_TOUCH_N;
-			uint8_t touch_s_edge = touch_edge & MGC_TOUCH_S;
-
-			if (touch_edge & MGC_TOUCH_E) {
-				wheel = 10;  /* Scroll up */
-				LOG_INF("Touch East → Scroll up (wheel=%d)", wheel);
-			}
-			if (touch_edge & MGC_TOUCH_W) {
-				wheel = -10;  /* Scroll down */
-				LOG_INF("Touch West → Scroll down (wheel=%d)", wheel);
-			}
-
-			prev_touch_state = touch_state;
-
 			/* Airwheel scrolling - continuous */
 			if (airwheel_active) {
 				const int8_t vel_scale[] = {0, 5, 10, 20};
@@ -371,33 +497,36 @@ void event_handler(struct esb_evt const *event)
 			if (wheel > 127) wheel = 127;
 			if (wheel < -127) wheel = -127;
 
-			/* Build HID mouse button byte with OR logic (touch OR physical buttons):
-			 * bit 0 = left button (btn1 OR touch N)
-			 * bit 1 = right button (btn2 OR touch S)
+			/* Build HID mouse button byte (PHYSICAL BUTTONS ONLY):
+			 * bit 0 = left button (btn1)
+			 * bit 1 = right button (btn2)
 			 * bit 2 = middle button (btn3)
 			 */
 			uint8_t mouse_buttons = 0;
 
-			/* Physical button 1 OR Touch North → Left click */
-			if (btn1 || touch_n_edge) {
+			/* Physical button 1 → Left click */
+			if (btn1) {
 				mouse_buttons |= 0x01;
 				LOG_INF("Left mouse button: PRESSED");
 			} else {
 				LOG_INF("Left mouse button: RELEASED");
 			}
 
-			/* Physical button 2 OR Touch South → Right click */
-			if (btn2 || touch_s_edge) {
+			/* Physical button 2 → Right click */
+			if (btn2) {
 				mouse_buttons |= 0x02;
 				LOG_INF("Right mouse button: PRESSED");
 			} else {
 				LOG_INF("Right mouse button: RELEASED");
 			}
 
-			/* Physical button 3 → Middle click (optional) */
+			/* Physical button 3 → Middle click */
 			if (btn3) {
 				mouse_buttons |= 0x04;
 			}
+
+			/* Process keyboard touches */
+			process_keyboard_touches(mgc);
 
 			/* Send mouse report with absolute positioning and button state */
 			send_mouse_report(abs_x, abs_y, mouse_buttons, wheel);
@@ -604,37 +733,59 @@ int main(void)
 		return 0;
 	}
 
-	LOG_INF("USB HID Mouse initialized - ESB packets will left click mouse");
+	LOG_INF("USB HID Mouse + Keyboard initialized");
 
-	/* Main loop: process USB HID mouse reports */
+	/* Main loop: process USB HID reports from both queues */
 	while (true) {
-		uint8_t report[MOUSE_REPORT_COUNT];
+		uint8_t mouse_report[MOUSE_REPORT_COUNT];
+		uint8_t kbd_report[KBD_REPORT_COUNT];
+		bool processed = false;
 
-		/* Wait for mouse report from ESB event handler */
-		err = k_msgq_get(&mouse_msgq, &report, K_FOREVER);
-		if (err) {
-			LOG_ERR("Failed to get report from queue: %d", err);
-			continue;
+		/* Try to get mouse report (non-blocking) */
+		if (k_msgq_get(&mouse_msgq, &mouse_report, K_NO_WAIT) == 0) {
+			uint8_t usb_report[MOUSE_REPORT_COUNT + 1];
+			usb_report[0] = REPORT_ID_MOUSE;
+			memcpy(&usb_report[1], mouse_report, MOUSE_REPORT_COUNT);
+
+			uint16_t abs_x = mouse_report[MOUSE_X_LOW_IDX] |
+					(mouse_report[MOUSE_X_HIGH_IDX] << 8);
+			uint16_t abs_y = mouse_report[MOUSE_Y_LOW_IDX] |
+					(mouse_report[MOUSE_Y_HIGH_IDX] << 8);
+			LOG_INF("USB: Mouse report (ID=1): btn=%d, X=%u, Y=%u",
+				mouse_report[MOUSE_BTN_REPORT_IDX], abs_x, abs_y);
+
+			err = hid_int_ep_write(hid_dev, usb_report,
+					       MOUSE_REPORT_COUNT + 1, NULL);
+			if (err == 0) {
+				k_sem_take(&ep_write_sem, K_FOREVER);
+				processed = true;
+			} else {
+				LOG_ERR("HID mouse write error: %d", err);
+			}
 		}
 
-		/* Reconstruct 16-bit absolute coordinates for logging */
-		uint16_t abs_x = report[MOUSE_X_LOW_IDX] | (report[MOUSE_X_HIGH_IDX] << 8);
-		uint16_t abs_y = report[MOUSE_Y_LOW_IDX] | (report[MOUSE_Y_HIGH_IDX] << 8);
+		/* Try to get keyboard report (non-blocking) */
+		if (k_msgq_get(&kbd_msgq, &kbd_report, K_NO_WAIT) == 0) {
+			uint8_t usb_report[KBD_REPORT_COUNT + 1];
+			usb_report[0] = REPORT_ID_KEYBOARD;
+			memcpy(&usb_report[1], kbd_report, KBD_REPORT_COUNT);
 
-		LOG_INF("Sending HID report: btn=%d, abs_x=%u, abs_y=%u",
-			report[MOUSE_BTN_REPORT_IDX],
-			abs_x,
-			abs_y);
+			LOG_INF("USB: Keyboard report (ID=2): key=0x%02x",
+				kbd_report[KBD_KEY1_IDX]);
 
-		/* Send HID report over USB */
-		err = hid_int_ep_write(hid_dev, report, MOUSE_REPORT_COUNT, NULL);
-		if (err) {
-			LOG_ERR("HID write error, %d", err);
-		} else {
-			LOG_DBG("HID write successful, waiting for endpoint ready");
-			/* Wait for endpoint to be ready */
-			k_sem_take(&ep_write_sem, K_FOREVER);
-			LOG_DBG("Endpoint ready");
+			err = hid_int_ep_write(hid_dev, usb_report,
+					       KBD_REPORT_COUNT + 1, NULL);
+			if (err == 0) {
+				k_sem_take(&ep_write_sem, K_FOREVER);
+				processed = true;
+			} else {
+				LOG_ERR("HID keyboard write error: %d", err);
+			}
+		}
+
+		/* If no reports processed, sleep briefly to avoid busy loop */
+		if (!processed) {
+			k_sleep(K_MSEC(1));
 		}
 	}
 
