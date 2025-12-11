@@ -34,10 +34,10 @@
 
 LOG_MODULE_REGISTER(esb_prx, CONFIG_ESB_PRX_APP_LOG_LEVEL);
 
-/* Sensor data packet structure */
+/* Unified sensor data packet structure */
 typedef struct {
 	uint8_t btn_state;      /* 3 bits: btn1, btn2, btn3 (1=pressed, 0=released) */
-	uint8_t mgc_state;      /* MGC touch + airwheel data */
+	uint16_t mgc_state;     /* MGC data: touch(byte 1) + airwheel(byte 2) */
 	int16_t quat_w;         /* Quaternion w component (scaled by 32767) */
 	int16_t quat_x;         /* Quaternion x component (scaled by 32767) */
 	int16_t quat_y;         /* Quaternion y component (scaled by 32767) */
@@ -92,15 +92,35 @@ typedef struct {
 
 static kbd_state_t kbd_state = {0};
 
-/* MGC state bit field definitions */
-#define MGC_TOUCH_N         (1 << 0)  /* North electrode */
-#define MGC_TOUCH_S         (1 << 1)  /* South electrode */
-#define MGC_TOUCH_E         (1 << 2)  /* East electrode */
-#define MGC_TOUCH_W         (1 << 3)  /* West electrode */
-#define MGC_AIRWHEEL_ACTIVE (1 << 4)  /* Airwheel gesture active */
-#define MGC_AIRWHEEL_DIR    (1 << 5)  /* Direction: 1=CW, 0=CCW */
-#define MGC_AIRWHEEL_VEL_MASK 0xC0    /* Bits 6-7: velocity level */
-#define MGC_AIRWHEEL_VEL_SHIFT 6
+/* MGC state bit packing (2-byte layout) */
+/* Byte 1 (Touch) - Lower 8 bits */
+#define MGC_TOUCH_N              (1 << 0)  /* Bit 0: North electrode */
+#define MGC_TOUCH_S              (1 << 1)  /* Bit 1: South electrode */
+#define MGC_TOUCH_E              (1 << 2)  /* Bit 2: East electrode */
+#define MGC_TOUCH_W              (1 << 3)  /* Bit 3: West electrode */
+#define MGC_TOUCH_MASK           0x000F    /* Bits 0-3: Touch electrodes */
+#define MGC_TOUCH_RESERVED_MASK  0x00F0    /* Bits 4-7: Reserved */
+
+/* Byte 2 (Airwheel) - Upper 8 bits */
+#define MGC_AIRWHEEL_ACTIVE         (1 << 8)   /* Bit 8: Airwheel active */
+#define MGC_AIRWHEEL_DIRECTION_CW   (1 << 9)   /* Bit 9: Direction (1=CW, 0=CCW) */
+#define MGC_AIRWHEEL_VELOCITY_SHIFT 10         /* Bits 10-15: Velocity (0-63) */
+#define MGC_AIRWHEEL_VELOCITY_MASK  0xFC00     /* Bits 10-15 mask */
+
+/* Helper macros to unpack MGC state from uint16_t */
+#define MGC_UNPACK_TOUCH(state)            ((uint8_t)((state) & MGC_TOUCH_MASK))
+#define MGC_UNPACK_AIRWHEEL_ACTIVE(state)  (((state) & MGC_AIRWHEEL_ACTIVE) != 0)
+#define MGC_UNPACK_DIRECTION_CW(state)     (((state) & MGC_AIRWHEEL_DIRECTION_CW) != 0)
+#define MGC_UNPACK_AIRWHEEL_VELOCITY(state) ((uint8_t)(((state) & MGC_AIRWHEEL_VELOCITY_MASK) >> MGC_AIRWHEEL_VELOCITY_SHIFT))
+
+/* Helper macro to pack MGC state into uint16_t (for transmitter reference) */
+#define MGC_PACK_STATE(touch, active, dir_cw, vel) \
+	((uint16_t)( \
+		((touch) & MGC_TOUCH_MASK) | \
+		((active) ? MGC_AIRWHEEL_ACTIVE : 0) | \
+		((dir_cw) ? MGC_AIRWHEEL_DIRECTION_CW : 0) | \
+		(((vel) << MGC_AIRWHEEL_VELOCITY_SHIFT) & MGC_AIRWHEEL_VELOCITY_MASK) \
+	))
 
 /* HID Report Descriptor for Mouse + Keyboard composite device */
 static const uint8_t hid_report_desc[] = {
@@ -362,7 +382,7 @@ static void send_keyboard_report(uint8_t keycode)
 }
 
 /* Process keyboard touches with edge-triggered detection */
-static void process_keyboard_touches(uint8_t mgc_state)
+static void process_keyboard_touches(uint16_t mgc_state)
 {
 	uint8_t touch_n_active = (mgc_state & MGC_TOUCH_N) ? 1 : 0;
 	uint8_t touch_s_active = (mgc_state & MGC_TOUCH_S) ? 1 : 0;
@@ -460,13 +480,13 @@ void event_handler(struct esb_evt const *event)
 
 			leds_update(sensor_data->btn_state);
 
-			/* Parse MGC state */
-			uint8_t mgc = sensor_data->mgc_state;
-			uint8_t airwheel_active = mgc & MGC_AIRWHEEL_ACTIVE;
-			uint8_t airwheel_cw = mgc & MGC_AIRWHEEL_DIR;
-			uint8_t airwheel_vel = (mgc & MGC_AIRWHEEL_VEL_MASK) >> MGC_AIRWHEEL_VEL_SHIFT;
+			/* Parse MGC state (2-byte format) */
+			uint16_t mgc = sensor_data->mgc_state;
+			uint8_t airwheel_active = MGC_UNPACK_AIRWHEEL_ACTIVE(mgc);
+			uint8_t airwheel_cw = MGC_UNPACK_DIRECTION_CW(mgc);
+			uint8_t airwheel_vel = MGC_UNPACK_AIRWHEEL_VELOCITY(mgc);
 
-			LOG_DBG("MGC state: 0x%02x (N=%d S=%d E=%d W=%d AW_active=%d dir=%s vel=%d)",
+			LOG_DBG("MGC state: 0x%04x (N=%d S=%d E=%d W=%d AW_active=%d dir=%s vel=%d)",
 				mgc,
 				(mgc & MGC_TOUCH_N)?1:0,
 				(mgc & MGC_TOUCH_S)?1:0,
@@ -479,10 +499,13 @@ void event_handler(struct esb_evt const *event)
 			/* Calculate scroll wheel value */
 			int8_t wheel = 0;
 
-			/* Airwheel scrolling - continuous */
+			/* Airwheel scrolling - continuous with 6-bit velocity (0-63) */
 			if (airwheel_active) {
-				const int8_t vel_scale[] = {0, 5, 10, 20};
-				int8_t scroll_amount = vel_scale[airwheel_vel];
+				/* Scale velocity (0-63) to scroll amount (0-127) */
+				int8_t scroll_amount = (airwheel_vel * 2);  /* Linear scaling */
+
+				/* Clamp to max scroll value */
+				if (scroll_amount > 127) scroll_amount = 127;
 
 				if (airwheel_cw) {
 					wheel += scroll_amount;  /* CW = scroll up */
