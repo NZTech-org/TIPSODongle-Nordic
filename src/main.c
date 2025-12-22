@@ -44,9 +44,15 @@ typedef struct {
 	int16_t quat_z;         /* Quaternion z component (scaled by 32767) */
 } __attribute__((packed)) sensor_data_t;
 
+/* Response payload structure sent back to transmitter via ESB ACK */
+typedef struct {
+	uint8_t vibration_enable;      /* 0=off, 1=on */
+	uint8_t reserved[7];           /* Reserved for future expansion */
+} __attribute__((packed)) response_data_t;
+
 static struct esb_payload rx_payload;
 static struct esb_payload tx_payload = ESB_CREATE_PAYLOAD(0,
-	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17);
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
 
 /* LED for nrf52840dongle */
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
@@ -91,6 +97,9 @@ typedef struct {
 } kbd_state_t;
 
 static kbd_state_t kbd_state = {0};
+
+/* Vibration state tracking */
+static bool vibration_active = false;
 
 /* MGC state bit packing (2-byte layout) */
 /* Byte 1 (Touch) - Lower 8 bits */
@@ -326,6 +335,9 @@ static void send_keyboard_report(uint8_t keycode)
 	}
 }
 
+/* Forward declaration */
+static void update_vibration_command(uint8_t enable);
+
 /* Process keyboard touches with edge-triggered detection */
 static void process_keyboard_touches(uint16_t mgc_state)
 {
@@ -338,9 +350,21 @@ static void process_keyboard_touches(uint16_t mgc_state)
 	if (touch_n_active && !kbd_state.touch_n_pressed) {
 		send_keyboard_report(HID_KEY_A);
 		LOG_INF("Touch N pressed → Keyboard 'a'");
+
+		/* Turn vibration ON when touched */
+		if (!vibration_active) {
+			update_vibration_command(1);
+			vibration_active = true;
+		}
 	} else if (!touch_n_active && kbd_state.touch_n_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch N released → Keyboard release");
+
+		/* Turn vibration OFF when released */
+		if (vibration_active) {
+			update_vibration_command(0);
+			vibration_active = false;
+		}
 	}
 	kbd_state.touch_n_pressed = touch_n_active;
 
@@ -348,9 +372,21 @@ static void process_keyboard_touches(uint16_t mgc_state)
 	if (touch_s_active && !kbd_state.touch_s_pressed) {
 		send_keyboard_report(HID_KEY_B);
 		LOG_INF("Touch S pressed → Keyboard 'b'");
+
+		/* Turn vibration ON when touched */
+		if (!vibration_active) {
+			update_vibration_command(1);
+			vibration_active = true;
+		}
 	} else if (!touch_s_active && kbd_state.touch_s_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch S released → Keyboard release");
+
+		/* Turn vibration OFF when released */
+		if (vibration_active) {
+			update_vibration_command(0);
+			vibration_active = false;
+		}
 	}
 	kbd_state.touch_s_pressed = touch_s_active;
 
@@ -358,9 +394,21 @@ static void process_keyboard_touches(uint16_t mgc_state)
 	if (touch_e_active && !kbd_state.touch_e_pressed) {
 		send_keyboard_report(HID_KEY_C);
 		LOG_INF("Touch E pressed → Keyboard 'c'");
+
+		/* Turn vibration ON when touched */
+		if (!vibration_active) {
+			update_vibration_command(1);
+			vibration_active = true;
+		}
 	} else if (!touch_e_active && kbd_state.touch_e_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch E released → Keyboard release");
+
+		/* Turn vibration OFF when released */
+		if (vibration_active) {
+			update_vibration_command(0);
+			vibration_active = false;
+		}
 	}
 	kbd_state.touch_e_pressed = touch_e_active;
 
@@ -368,11 +416,50 @@ static void process_keyboard_touches(uint16_t mgc_state)
 	if (touch_w_active && !kbd_state.touch_w_pressed) {
 		send_keyboard_report(HID_KEY_D);
 		LOG_INF("Touch W pressed → Keyboard 'd'");
+
+		/* Turn vibration ON when touched */
+		if (!vibration_active) {
+			update_vibration_command(1);
+			vibration_active = true;
+		}
 	} else if (!touch_w_active && kbd_state.touch_w_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch W released → Keyboard release");
+
+		/* Turn vibration OFF when released */
+		if (vibration_active) {
+			update_vibration_command(0);
+			vibration_active = false;
+		}
 	}
 	kbd_state.touch_w_pressed = touch_w_active;
+}
+
+/**
+ * Update ESB TX payload with vibration command.
+ * This payload is automatically sent back with the next ACK.
+ *
+ * @param enable 1 to activate vibration, 0 to disable
+ */
+static void update_vibration_command(uint8_t enable)
+{
+	response_data_t response;
+
+	/* Build response payload */
+	response.vibration_enable = enable;
+	memset(response.reserved, 0, sizeof(response.reserved));
+
+	/* Update tx_payload data buffer */
+	memcpy(tx_payload.data, &response, sizeof(response_data_t));
+	tx_payload.length = sizeof(response_data_t);
+
+	/* Write payload to ESB - this updates the ACK payload */
+	int err = esb_write_payload(&tx_payload);
+	if (err) {
+		LOG_ERR("Failed to update vibration ACK payload, err %d", err);
+	} else {
+		LOG_DBG("Vibration command: enable=%d", enable);
+	}
 }
 
 void event_handler(struct esb_evt const *event)
