@@ -352,19 +352,13 @@ static void process_keyboard_touches(uint16_t mgc_state)
 		LOG_INF("Touch N pressed → Keyboard 'a'");
 
 		/* Turn vibration ON when touched */
-		if (!vibration_active) {
-			update_vibration_command(1);
-			vibration_active = true;
-		}
+		vibration_active = true;
 	} else if (!touch_n_active && kbd_state.touch_n_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch N released → Keyboard release");
 
 		/* Turn vibration OFF when released */
-		if (vibration_active) {
-			update_vibration_command(0);
-			vibration_active = false;
-		}
+		vibration_active = false;
 	}
 	kbd_state.touch_n_pressed = touch_n_active;
 
@@ -374,19 +368,13 @@ static void process_keyboard_touches(uint16_t mgc_state)
 		LOG_INF("Touch S pressed → Keyboard 'b'");
 
 		/* Turn vibration ON when touched */
-		if (!vibration_active) {
-			update_vibration_command(1);
-			vibration_active = true;
-		}
+		vibration_active = true;
 	} else if (!touch_s_active && kbd_state.touch_s_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch S released → Keyboard release");
 
 		/* Turn vibration OFF when released */
-		if (vibration_active) {
-			update_vibration_command(0);
-			vibration_active = false;
-		}
+		vibration_active = false;
 	}
 	kbd_state.touch_s_pressed = touch_s_active;
 
@@ -396,19 +384,13 @@ static void process_keyboard_touches(uint16_t mgc_state)
 		LOG_INF("Touch E pressed → Keyboard 'c'");
 
 		/* Turn vibration ON when touched */
-		if (!vibration_active) {
-			update_vibration_command(1);
-			vibration_active = true;
-		}
+		vibration_active = true;
 	} else if (!touch_e_active && kbd_state.touch_e_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch E released → Keyboard release");
 
 		/* Turn vibration OFF when released */
-		if (vibration_active) {
-			update_vibration_command(0);
-			vibration_active = false;
-		}
+		vibration_active = false;
 	}
 	kbd_state.touch_e_pressed = touch_e_active;
 
@@ -418,19 +400,13 @@ static void process_keyboard_touches(uint16_t mgc_state)
 		LOG_INF("Touch W pressed → Keyboard 'd'");
 
 		/* Turn vibration ON when touched */
-		if (!vibration_active) {
-			update_vibration_command(1);
-			vibration_active = true;
-		}
+		vibration_active = true;
 	} else if (!touch_w_active && kbd_state.touch_w_pressed) {
 		send_keyboard_report(0x00);
 		LOG_INF("Touch W released → Keyboard release");
 
 		/* Turn vibration OFF when released */
-		if (vibration_active) {
-			update_vibration_command(0);
-			vibration_active = false;
-		}
+		vibration_active = false;
 	}
 	kbd_state.touch_w_pressed = touch_w_active;
 }
@@ -582,6 +558,9 @@ void event_handler(struct esb_evt const *event)
 
 			/* Process keyboard touches */
 			process_keyboard_touches(mgc);
+
+			/* Always update vibration state in ACK payload to handle packet loss */
+			update_vibration_command(vibration_active ? 1 : 0);
 
 			/* Send mouse report with absolute positioning and button state */
 			send_mouse_report(abs_x, abs_y, mouse_buttons, wheel);
